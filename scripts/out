@@ -12,7 +12,7 @@ source "$(dirname "$0")/common.sh"
 
 destination="$1"
 
-if [ -z "${destination}" ]; then
+if [[ -z "${destination}" ]]; then
     echo "Usage: $0 <path/to/destination>" >&2
     exit 1
 fi
@@ -31,12 +31,15 @@ params="$(jq -r '.params // ""' < "${payload}")"
 path_to_repo="$(echo "${params}" | jq -r '.repository // ""')"
 new_status="$(echo "${params}" | jq -r '.status // ""')"
 build_label="$(echo "${params}" | jq -r '.build_label // "Concourse"')"
+comment_text="$(echo "${params}" | jq -r '.comment.text // ""')"
+comment_file="$(echo "${params}" | jq -r '.comment.file // ""')"
+comment=""
 
-if [ -z "${path_to_repo}" ]; then
+if [[ -z "${path_to_repo}" ]]; then
     echo "please specify a repository" >&2
     exit 1
 fi
-if [ -z "${new_status}" ]; then
+if [[ -z "${new_status}" ]]; then
     echo "please specify a status" >&2
     exit 1
 fi
@@ -54,13 +57,24 @@ else
     project_path="$(echo "${uri}" | sed -rn 's/(https?):\/\/([^\/]*)\/(.*)\.git/\3/p')"
     protocol="$(echo "${uri}" | sed -rn 's/(https?):\/\/([^\/]*)\/(.*)\.git/\1/p')"
 fi
-if [ "${no_ssl}" == 'true' ]; then
+if [[ "${no_ssl}" == 'true' ]]; then
     protocol='http'
 fi
 
 target_url="${ATC_EXTERNAL_URL}/teams/$(urlencode "${BUILD_TEAM_NAME}")/pipelines/$(urlencode "${BUILD_PIPELINE_NAME}")/jobs/$(urlencode "${BUILD_JOB_NAME}")/builds/$(urlencode "${BUILD_NAME}")"
 
 cd "${destination}"
+
+if [[ (! -z "${comment_text}") ]]; then
+    if [[ -z "${comment_file}" ]]; then
+        comment=${comment_text}
+    else
+        comment=$(echo "${comment_text}" | sed -e ':a' -e 'N' -e '$!ba' -e 's/\n/<br\/>/g' | sed "s/\$FILE_CONTENT/$(sed -e ':a' -e 'N' -e '$!ba' -e 's/\n/<br\/>/g' -e 's/[\/&]/\\&/g' "${comment_file}")/g")
+    fi
+elif [[ (! -z "${comment_file}") ]]; then
+    comment=$(cat "${comment_file}")
+fi
+
 cd "${path_to_repo}"
 
 commit_sha="$(git rev-parse HEAD)"
@@ -71,6 +85,22 @@ curl \
     --header 'Content-Type: application/json' \
     --data "{\"state\":\"${new_status}\",\"name\":\"${build_label}\",\"target_url\":\"${target_url}\"}" \
     "${protocol}://${gitlab_host}/api/v4/projects/$(urlencode "${project_path}")/statuses/${commit_sha}"
+
+if [[ (! -z "${private_key}") && (! -z "${comment}") ]]; then
+    git_branch=$(git show-ref --heads | sed -n "s/^$(git rev-parse HEAD) refs\/heads\/\(.*\)/\1/p")
+    merge_requests=$(curl \
+        --request GET \
+        --header "PRIVATE-TOKEN: ${private_token}" \
+        "${protocol}://${gitlab_host}/api/v4/projects/$(urlencode ${project_path})/merge_requests?source_branch=${git_branch}")
+
+    for merge_request_id in $(echo "${merge_requests}" | jq -r '.[].iid'); do
+        # Post comment to each merge request
+        curl \
+            --request POST \
+            --header "PRIVATE-TOKEN: ${private_token}" \
+            "${protocol}://${gitlab_host}/api/v4/projects/$(urlencode ${project_path})/merge_requests/$(urlencode ${merge_request_id})/notes?body=$(urlencode "${comment}")"
+    done
+fi
 
 version="{\"sha\":\"${commit_sha}\"}"
 
