@@ -27,12 +27,12 @@ uri="$(jq -r '.source.uri // ""' < "${payload}")"
 private_token="$(jq -r '.source.private_token // ""' < "${payload}")"
 private_key="$(jq -r '.source.private_key // ""' < "${payload}")"
 no_ssl="$(jq -r '.source.no_ssl // ""' < "${payload}")"
-params="$(jq -r '.params // ""' < "${payload}")"
-path_to_repo="$(echo "${params}" | jq -r '.repository // ""')"
-new_status="$(echo "${params}" | jq -r '.status // ""')"
-build_label="$(echo "${params}" | jq -r '.build_label // "Concourse"')"
-comment_text="$(echo "${params}" | jq -r '.comment.text // ""')"
-comment_file="$(echo "${params}" | jq -r '.comment.file // ""')"
+path_to_repo="$(jq -c -r '.params.repository // ""' < "${payload}")"
+new_status="$(jq -c -r '.params.status // ""' < "${payload}")"
+build_label="$(jq -c -r '.params.build_label // "Concourse"' < "${payload}")"
+comment_text="$(jq -c -r '.params.comment.text // ""' < "${payload}")"
+comment_file="$(jq -c -r '.params.comment.file // ""' < "${payload}")"
+comment_files="$(jq -c -r '.params.comment.files // ""' < "${payload}")"
 comment=""
 
 if [[ -z "${path_to_repo}" ]]; then
@@ -65,11 +65,26 @@ target_url="${ATC_EXTERNAL_URL}/teams/$(urlencode "${BUILD_TEAM_NAME}")/pipeline
 
 cd "${destination}"
 
+if [[ (-z "${comment_files}") && (! -z "${comment_file}") ]]; then
+    comment_files=$(echo "${comment_file}" | jq -c --raw-input '{ "FILE_CONTENT": . }')
+fi
+
 if [[ (! -z "${comment_text}") ]]; then
-    if [[ -z "${comment_file}" ]]; then
-        comment=${comment_text}
-    else
-        comment=$(echo "${comment_text}" | sed -e ':a' -e 'N' -e '$!ba' -e 's/\n/<br\/>/g' | sed "s/\$FILE_CONTENT/$(sed -e ':a' -e 'N' -e '$!ba' -e 's/\n/<br\/>/g' -e 's/[\/&]/\\&/g' "${comment_file}")/g")
+    comment=$(echo "${comment_text}" | sed -e ':a' -e 'N' -e '$!ba' -e 's/\n/<br\/>/g')
+
+    if [[ ! -z "${comment_files}" ]]; then
+        for row in $(echo "${comment_files}" | jq -c -r 'to_entries[] | @base64'); do
+            _jq() {
+                 echo ${row} | base64 -d | jq -r ${1}
+            }
+
+            file_key=$(echo "\$$(_jq '.key')" | sed -e 's/[]\/$*.^[]/\\&/g')
+            file_name=$(_jq '.value')
+            file_content=$(cat  | sed -e ':a' -e 'N' -e '$!ba' -e 's/\n/<br\/>/g' -e 's/[\/&]/\\&/g' "${file_name}")
+
+            comment=$(echo "${comment}" | sed "s/${file_key}/${file_content}/g")
+            echo ${comment}
+        done
     fi
 elif [[ (! -z "${comment_file}") ]]; then
     comment=$(cat "${comment_file}")
