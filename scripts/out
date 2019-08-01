@@ -106,14 +106,16 @@ if [[ (! -z "${private_key}") && (! -z "${comment}") ]]; then
     merge_requests=$(curl \
         --request GET \
         --header "PRIVATE-TOKEN: ${private_token}" \
-        "${protocol}://${gitlab_host}/api/v4/projects/$(urlencode ${project_path})/merge_requests?source_branch=${git_branch}")
+        "${protocol}://${gitlab_host}/api/v4/projects/$(urlencode "${project_path}")/merge_requests?source_branch=${git_branch}")
 
     for merge_request_id in $(echo "${merge_requests}" | jq -r '.[].iid'); do
         # Post comment to each merge request
         curl \
             --request POST \
+            --data "$(echo "${comment}" | jq -c -R '{ "body": . }')" \
+            --header "Content-Type: application/json" \
             --header "PRIVATE-TOKEN: ${private_token}" \
-            "${protocol}://${gitlab_host}/api/v4/projects/$(urlencode ${project_path})/merge_requests/$(urlencode ${merge_request_id})/notes?body=$(urlencode "${comment}")"
+            "${protocol}://${gitlab_host}/api/v4/projects/$(urlencode "${project_path}")/merge_requests/$(urlencode "${merge_request_id}")/notes"
     done
 fi
 
