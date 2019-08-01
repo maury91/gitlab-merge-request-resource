@@ -80,10 +80,10 @@ if [[ (! -z "${comment_text}") ]]; then
 
             file_key=$(echo "\$$(_jq '.key')" | sed -e 's/[]\/$*.^[]/\\&/g')
             file_name=$(_jq '.value')
-            file_content=$(cat  | sed -e ':a' -e 'N' -e '$!ba' -e 's/\n/<br\/>/g' -e 's/[\/&]/\\&/g' "${file_name}")
-
-            comment=$(echo "${comment}" | sed "s/${file_key}/${file_content}/g")
-            echo ${comment}
+            if [ -f "${file_name}" ]; then
+              file_content=$(cat  | sed -e ':a' -e 'N' -e '$!ba' -e 's/\n/<br\/>/g' -e 's/[\/&]/\\&/g' "${file_name}")
+              comment=$(echo "${comment}" | sed "s/${file_key}/${file_content}/g")
+            fi
         done
     fi
 elif [[ (! -z "${comment_file}") ]]; then
